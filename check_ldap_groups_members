@@ -1,0 +1,130 @@
+#!/bin/bash
+#
+# El objetivo principal de check_ldap_groups_members es identificar
+# y preparar la limpieza de "miembros huérfanos" dentro de los grupos
+# de un servidor LDAP.
+#
+# Un miembro se considera huérfano cuando aparece listado dentro de un
+#grupo (ya sea por su DN o por su UID), pero el objeto de usuario
+# correspondiente ya no existe en el directorio. Esto suele ocurrir
+# cuando se borra a un usuario pero no se le elimina de los grupos a
+#los que pertenecía, dejando "restos" de información innecesaria.
+#
+# Esteban M. Navas
+# IES Valle del Jerte
+# Fecha creación: 30/04/2026
+
+###################################################################
+# CONFIGURACIÓN
+###################################################################
+SERVIDOR="ldap://ip-servidor-ldap"
+BASE_DN="dc=instituto,dc=extremadura,dc=es"
+ADMIN_DN="cn=admin,ou=People,$BASE_DN"
+LOG="/var/log/check_ldap.log"
+
+if [ -z "$1" ]; then
+    echo "Uso: $0 <nombre_del_grupo | all>"
+    exit 1
+fi
+
+PARAMETRO="$1"
+
+###################################################################
+# FUNCIONES AUXILIARES
+###################################################################
+
+function mensaje() {
+   texto=$1
+   contenido=$2
+   indentado=$3
+
+   if [ -n "$contenido" ] || [ "$indentado" == "false" ]; then
+      {
+         echo -n "$texto"
+         if [ "$indentado" != "true" ]; then
+            echo "$contenido"
+         else
+            echo ""
+            for linea in $contenido; do
+               echo -e "\t$linea"
+            done
+         fi
+         echo ""
+      } | tee -a "$LOG"
+   fi
+}
+
+function auditar_grupo() {
+    local GRUPO_NOMBRE=$1
+    local GRUPO_DN="cn=$GRUPO_NOMBRE,ou=Group,$BASE_DN"
+    local LDIF_FILE="borrar_huerfanos_${GRUPO_NOMBRE}.ldif"
+    
+    mensaje ">>> Auditando grupo: $GRUPO_NOMBRE" "" "false"
+
+    if ! ldapsearch -x -H "$SERVIDOR" -LLL -b "$GRUPO_DN" cn > /dev/null 2>&1; then
+        mensaje "ERROR:" "El grupo $GRUPO_DN no existe." "false"
+        return
+    fi
+
+    echo "dn: $GRUPO_DN" > "$LDIF_FILE"
+    echo "changetype: modify" >> "$LDIF_FILE"
+
+    local huerfanos_dn=""
+    local huerfanos_uid=""
+    local count=0
+
+    for dn in $(ldapsearch -x -H "$SERVIDOR" -LLL -b "$GRUPO_DN" member | grep '^member:' | awk '{print $2}'); do
+        if ! ldapsearch -x -H "$SERVIDOR" -LLL -s base -b "$dn" cn > /dev/null 2>&1; then
+            huerfanos_dn="$huerfanos_dn $dn"
+            echo "delete: member" >> "$LDIF_FILE"
+            echo "member: $dn" >> "$LDIF_FILE"
+            echo "-" >> "$LDIF_FILE"
+            ((count++))
+        fi
+    done
+
+    for uid in $(ldapsearch -x -H "$SERVIDOR" -LLL -b "$GRUPO_DN" memberUid | grep '^memberUid:' | awk '{print $2}'); do
+        if ! ldapsearch -x -H "$SERVIDOR" -LLL -b "ou=People,$BASE_DN" "(uid=$uid)" uid | grep -q "uid: $uid"; then
+            huerfanos_uid="$huerfanos_uid $uid"
+            echo "delete: memberUid" >> "$LDIF_FILE"
+            echo "memberUid: $uid" >> "$LDIF_FILE"
+            echo "-" >> "$LDIF_FILE"
+            ((count++))
+        fi
+    done
+
+    mensaje "Miembros huérfanos (DN) detectados:" "$huerfanos_dn" "true"
+    mensaje "Miembros huérfanos (UID) detectados:" "$huerfanos_uid" "true"
+
+    if [ $count -eq 0 ]; then
+        rm "$LDIF_FILE"
+    else
+        sed -i '$ d' "$LDIF_FILE"
+        mensaje "FICHERO GENERADO:" "$LDIF_FILE ($count entradas)" "false"
+        echo "Comando: ldapmodify -x -H $SERVIDOR -D \"$ADMIN_DN\" -W -f $LDIF_FILE" | tee -a "$LOG"
+        echo "------------------------------------------------------------"
+    fi
+}
+
+###################################################################
+# EJECUCIÓN PRINCIPAL
+###################################################################
+
+mensaje "--- INICIO DE PROCESO: $(date) ---" "" "false"
+
+if [ "$PARAMETRO" == "all" ]; then
+    mensaje "Modo 'all' detectado (excluyendo grupos privados)..." "" "false"
+    
+    # Filtro LDAP modificado para excluir groupType=private
+    FILTRO="(&(objectClass=posixGroup)(!(groupType=private)))"
+    
+    LISTA_GRUPOS=$(ldapsearch -x -H "$SERVIDOR" -LLL -b "ou=Group,$BASE_DN" "$FILTRO" cn | grep '^cn:' | awk '{print $2}')
+    
+    for g in $LISTA_GRUPOS; do
+        auditar_grupo "$g"
+    done
+else
+    auditar_grupo "$PARAMETRO"
+fi
+
+mensaje "--- FIN DEL PROCESO ---" "" "false"
