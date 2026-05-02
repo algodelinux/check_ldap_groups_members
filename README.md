@@ -26,13 +26,18 @@ Antes de ejecutarlo, edita las variables en la sección de `CONFIGURACIÓN` del 
 ## 📖 Uso
 Dar permisos de ejecución:
 ```bash
-chmod +x check_ldap_groups_members```
+chmod +x check_ldap_groups_members
+```
 
 Ejecutar para un grupo específico:
-```./check_ldap_groups_members nombre_del_grupo```
+```bash
+./check_ldap_groups_members nombre_del_grupo
+```
 
 Ejecutar para todos los grupos: 
-```./check_ldap_groups_members all```
+```bash
+./check_ldap_groups_members all
+```
 
 ## ⚙️ Gestión de Miembros Huérfanos (.ldif)
 Cuando el script detecta inconsistencias, genera archivos con extensión `.ldif` (*LDAP Data Interchange Format*). Estos archivos contienen las instrucciones necesarias para limpiar el directorio de forma segura.
