@@ -47,4 +47,4 @@ Cuando el script detecta inconsistencias, genera archivos con extensión `.ldif`
 * **Aplicación de cambios:** Para ejecutar la limpieza, se debe utilizar el comando `ldapmodify`. El script mostrará al final la sintaxis exacta, que suele ser:
 
 ```bash
-ldapmodify -x -H ldap://ip-servidor -D "cn=admin,..." -W -f borrar_huerfanos_nombre.ldif
+ldapmodify -x -H ldap://ip-servidor -D "cn=admin,ou=People,dc=instituto,dc=extremadura,dc=es" -W -f borrar_huerfanos_nombre.ldif
